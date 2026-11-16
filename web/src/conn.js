@@ -20,6 +20,9 @@ const listeners = new Set();
 const set = (patch) => { state = { ...state, ...patch }; listeners.forEach((l) => l()); };
 
 let ws = null;
+let frame = null;
+let previewWanted = false;
+const frameListeners = new Set();
 let retry = 0;
 let retryTimer = null;
 let pingTimer = null;
@@ -39,6 +42,7 @@ function connect() {
     clearInterval(pingTimer);
     const ping = () => ws?.readyState === 1 && ws.send(JSON.stringify({ t: 'ping', at: performance.now() }));
     ping(); pingTimer = setInterval(ping, 5000);
+    if (previewWanted) sendRaw({ t: 'preview', on: true });
   };
   ws.onmessage = (e) => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
@@ -46,6 +50,7 @@ function connect() {
       case 'hello': write(NAME_KEY, m.tv); set({ tvName: m.tv, tvOnline: m.online, tv: { ...state.tv, ...m.state } }); break;
       case 'tv': set({ tvOnline: m.online }); break;
       case 'state': set({ tv: { ...state.tv, ...m.state } }); break;
+      case 'frame': frame = 'data:image/jpeg;base64,' + m.d; frameListeners.forEach((l) => l()); break;
       case 'pong': set({ latency: Math.round(performance.now() - m.at) }); break;
       case 'match': {
         const { newMatch, t, ...rest } = m;
@@ -77,6 +82,7 @@ export const conn = {
   open: (pkg) => sendRaw({ t: 'open', pkg }),
   text: (v) => sendRaw({ t: 'text', v }),
   vote: (key, like) => sendRaw({ t: 'vote', key, like }),
+  preview(on) { previewWanted = on; sendRaw({ t: 'preview', on }); if (!on) { frame = null; frameListeners.forEach((l) => l()); } },
   clearMatchPopup: () => set({ newMatch: null }),
   async pair(code) {
     const r = await fetch('/api/pair', {
@@ -95,4 +101,8 @@ export const conn = {
 
 export function useConn() {
   return useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => state);
+}
+
+export function useFrame() {
+  return useSyncExternalStore((l) => { frameListeners.add(l); return () => frameListeners.delete(l); }, () => frame);
 }

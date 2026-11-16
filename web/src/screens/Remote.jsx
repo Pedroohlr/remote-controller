@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence, useMotionValue } from 'framer-motion';
-import { conn, useConn } from '../conn.js';
+import { conn, useConn, useFrame } from '../conn.js';
 import { Ic, Segmented, spring, soft, tap } from '../ui.jsx';
 
 const LABEL = { up: 'Cima', down: 'Baixo', left: 'Esquerda', right: 'Direita', ok: 'OK', back: 'Voltar', home: 'Início', play: 'Play / Pausa', mute: 'Mudo' };
@@ -147,6 +147,35 @@ function Volume({ value, muted }) {
   );
 }
 
+function Preview() {
+  const frame = useFrame();
+  const { tvOnline } = useConn();
+  const [big, setBig] = useState(false);
+  useEffect(() => {
+    const sync = () => conn.preview(document.visibilityState === 'visible');
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => { document.removeEventListener('visibilitychange', sync); conn.preview(false); };
+  }, []);
+  return (
+    <>
+      <motion.button layoutId="tvprev" className="preview" onClick={() => frame && setBig(true)} aria-label="Tela da TV. Toque para ampliar" transition={spring}>
+        {frame ? <img src={frame} alt="" draggable={false} /> : <span className="label">{tvOnline ? 'carregando…' : 'TV desligada'}</span>}
+        <span className="preview-live"><span className="dot" />AO VIVO</span>
+      </motion.button>
+      <AnimatePresence>
+        {big && (
+          <motion.div className="scrim" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setBig(false)}>
+            <motion.div layoutId="tvprev" className="preview big" transition={spring}>
+              {frame && <img src={frame} alt="Tela da TV" draggable={false} />}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
 export default function RemoteScreen() {
   const { tv } = useConn();
   const [mode, setMode] = useState(() => { try { return Number(localStorage.getItem('controle.mode')) || 0; } catch { return 0; } });
@@ -172,6 +201,8 @@ export default function RemoteScreen() {
           </AnimatePresence>
         </div>
       </div>
+
+      <Preview />
 
       <AnimatePresence mode="wait" initial={false}>
         <motion.div key={mode} initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }} transition={{ duration: 0.18 }}>

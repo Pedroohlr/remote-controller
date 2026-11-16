@@ -150,6 +150,7 @@ function onTv(ws, id) {
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
   toPhones(id, { t: 'tv', online: true });
+  syncPreview(id);
 
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
@@ -161,6 +162,9 @@ function onTv(ws, id) {
         toPhones(id, { t: 'state', state: m.state });
         break;
       }
+      case 'frame':
+        for (const p of phoneSockets.get(id) || []) if (p.preview) send(p, { t: 'frame', d: m.d });
+        break;
       case 'pairReq':
         send(ws, { t: 'pairCode', code: newPairCode(id), ttl: 600 });
         break;
@@ -182,6 +186,12 @@ function onTv(ws, id) {
   });
 }
 
+// Tell the TV to capture only while at least one phone is looking at the preview.
+function syncPreview(tv) {
+  const on = [...(phoneSockets.get(tv) || [])].some((p) => p.preview);
+  send(tvSockets.get(tv), { t: 'preview', on });
+}
+
 const TV_COMMANDS = new Set(['up', 'down', 'left', 'right', 'ok', 'back', 'home', 'play', 'mute', 'power', 'volUp', 'volDown', 'enter']);
 
 function onPhone(ws, tv, tokenHash) {
@@ -199,6 +209,7 @@ function onPhone(ws, tv, tokenHash) {
     const tvWs = tvSockets.get(tv);
     switch (m.t) {
       case 'ping': send(ws, { t: 'pong', at: m.at }); break;
+      case 'preview': ws.preview = !!m.on; syncPreview(tv); break;
       case 'cmd': if (TV_COMMANDS.has(m.c)) send(tvWs, { t: 'cmd', c: m.c }); break;
       case 'vol': send(tvWs, { t: 'vol', v: Math.max(0, Math.min(100, Number(m.v) || 0)) }); break;
       case 'open': if (typeof m.pkg === 'string' && /^[\w.]+$/.test(m.pkg)) send(tvWs, { t: 'open', pkg: m.pkg }); break;
@@ -216,7 +227,7 @@ function onPhone(ws, tv, tokenHash) {
       }
     }
   });
-  ws.on('close', () => phoneSockets.get(tv)?.delete(ws));
+  ws.on('close', () => { phoneSockets.get(tv)?.delete(ws); if (ws.preview) syncPreview(tv); });
 }
 
 // heartbeat: drop dead connections (phones sleeping, TV losing Wi-Fi)
