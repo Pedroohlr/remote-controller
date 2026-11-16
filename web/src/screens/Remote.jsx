@@ -4,7 +4,7 @@ import { conn, useConn } from '../conn.js';
 import { Ic, Segmented, spring, soft, tap } from '../ui.jsx';
 
 const LABEL = { up: 'Cima', down: 'Baixo', left: 'Esquerda', right: 'Direita', ok: 'OK', back: 'Voltar', home: 'Início', play: 'Play / Pausa', mute: 'Mudo' };
-const STEP = 54; // px of finger travel per D-pad step
+const STEP = 60; // px of finger travel per D-pad step
 const ARROW_POS = {
   up: { top: 18, left: '50%', x: '-50%', rotate: -90 }, down: { bottom: 18, left: '50%', x: '-50%', rotate: 90 },
   left: { left: 18, top: '50%', y: '-50%', rotate: 180 }, right: { right: 18, top: '50%', y: '-50%', rotate: 0 },
@@ -25,32 +25,40 @@ function Touchpad({ send }) {
     <div
       ref={ref} className="touchpad" role="application" aria-label="Touchpad: deslize para navegar, toque para OK"
       onPointerDown={(e) => {
+        if (st.current.id != null) return; // ignore a second finger
         ref.current.setPointerCapture(e.pointerId);
         const [px, py] = pos(e);
-        st.current = { sx: px, sy: py, ax: px, ay: py, moved: 0, t: Date.now() };
+        st.current = { id: e.pointerId, sx: px, sy: py, ax: px, ay: py, moved: 0, t: Date.now(), steps: 0, axis: null, last: 0 };
         x.set(px); y.set(py); setTouching(true);
       }}
       onPointerMove={(e) => {
-        if (!touching) return;
+        const s = st.current;
+        if (e.pointerId !== s.id) return;
         const [px, py] = pos(e); x.set(px); y.set(py);
-        const s = st.current, dx = px - s.ax, dy = py - s.ay;
         s.moved = Math.max(s.moved, Math.hypot(px - s.sx, py - s.sy));
-        if (Math.abs(dx) > STEP || Math.abs(dy) > STEP) {
-          if (Math.abs(dx) > Math.abs(dy)) fire(dx > 0 ? 'right' : 'left'); else fire(dy > 0 ? 'down' : 'up');
-          s.ax = px; s.ay = py;
+        // lock the gesture to the first clear axis so diagonal jitter doesn't fire extra steps
+        if (!s.axis && s.moved > 14) s.axis = Math.abs(px - s.sx) >= Math.abs(py - s.sy) ? 'x' : 'y';
+        if (!s.axis) return;
+        const d = s.axis === 'x' ? px - s.ax : py - s.ay;
+        const now = Date.now();
+        if (Math.abs(d) > STEP && now - s.last > 110) {
+          fire(s.axis === 'x' ? (d > 0 ? 'right' : 'left') : (d > 0 ? 'down' : 'up'));
+          s.steps++; s.last = now; s.ax = px; s.ay = py;
         }
       }}
       onPointerUp={(e) => {
-        setTouching(false);
         const s = st.current;
-        if (s.moved < 10 && Date.now() - s.t < 350) {
+        if (e.pointerId !== s.id) return;
+        s.id = null;
+        setTouching(false);
+        if (s.steps === 0 && s.moved < 10 && Date.now() - s.t < 350) {
           const [px, py] = pos(e); const id = Math.random();
           setRipples((r) => [...r, { id, px, py }]);
           setTimeout(() => setRipples((r) => r.filter((q) => q.id !== id)), 700);
           send('ok');
         }
       }}
-      onPointerCancel={() => setTouching(false)}
+      onPointerCancel={() => { st.current.id = null; setTouching(false); }}
     >
       <div className="touchpad-dots" />
       <AnimatePresence>
